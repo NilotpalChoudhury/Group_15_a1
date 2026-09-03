@@ -1,0 +1,131 @@
+{
+  "database": "bitestream",
+  "collections": {
+    "menus": {
+      "description": "Flexible restaurant menu catalog",
+      "fields": {
+        "_id": "UUID/string",
+        "restaurant_id": "integer",
+        "restaurant_name": "string",
+        "categories": [
+          {
+            "name": "string",
+            "items": [
+              {
+                "item_id": "UUID/string",
+                "name": "string",
+                "description": "string",
+                "price": "number",
+                "available": "boolean",
+                "customization_addons": [
+                  {
+                    "name": "string",
+                    "price": "number"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "updated_at": "datetime"
+      },
+      "indexes": [
+        {
+          "key": {
+            "restaurant_id": 1
+          },
+          "name": "idx_menus_restaurant"
+        },
+        {
+          "key": {
+            "categories.name": 1
+          },
+          "name": "idx_menus_category"
+        }
+      ]
+    },
+    "reviews": {
+      "description": "Restaurant reviews with ratings and sentiment tags",
+      "fields": {
+        "_id": "UUID/string",
+        "restaurant_id": "integer",
+        "user_id": "UUID/string",
+        "rating": "integer (1-5)",
+        "comment": "string",
+        "sentiment_tags": [
+          "string"
+        ],
+        "created_at": "datetime"
+      },
+      "indexes": [
+        {
+          "key": {
+            "restaurant_id": 1
+          },
+          "name": "idx_reviews_restaurant"
+        },
+        {
+          "key": {
+            "rating": 1
+          },
+          "name": "idx_reviews_rating"
+        }
+      ]
+    },
+    "driverPings": {
+      "description": "Real-time driver geospatial location logs",
+      "fields": {
+        "_id": "UUID/string",
+        "driver_id": "integer",
+        "active": "boolean",
+        "location": {
+          "type": "GeoJSON Point",
+          "coordinates": [
+            "longitude",
+            "latitude"
+          ]
+        },
+        "created_at": "datetime"
+      },
+      "indexes": [
+        {
+          "key": {
+            "location": "2dsphere"
+          },
+          "name": "idx_driverPings_location_2dsphere"
+        },
+        {
+          "key": {
+            "created_at": 1
+          },
+          "name": "idx_driverPings_created_at_ttl",
+          "expireAfterSeconds": 7200
+        },
+        {
+          "key": {
+            "active": 1
+          },
+          "name": "idx_driverPings_active"
+        }
+      ]
+    }
+  },
+  "workflows": {
+    "workflow3": {
+      "name": "Nearest Active Driver",
+      "collection": "driverPings",
+      "operation": "$geoNear",
+      "criteria": "active drivers within 5 km of restaurant coordinates"
+    },
+    "workflow4": {
+      "name": "Multi-Faceted Review Analytics",
+      "collection": "reviews",
+      "operation": "$facet",
+      "outputs": [
+        "rating distribution (1-5 stars)",
+        "most frequent sentiment tags via $unwind",
+        "overall average rating"
+      ]
+    }
+  }
+}
