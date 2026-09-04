@@ -4,22 +4,18 @@ from decimal import Decimal
 import psycopg2
 
 
-# ============================================================
-# BiteStream | PostgreSQL Data Seeder
-# ============================================================
-
 DB_CONFIG = {
     "host": os.getenv("PGHOST", "localhost"),
     "port": os.getenv("PGPORT", "5432"),
     "dbname": os.getenv("PGDATABASE", "bitestream"),
     "user": os.getenv("PGUSER", "postgres"),
-    "password": os.getenv("PGPASSWORD", "postgres"),
+    "password": os.getenv("PGPASSWORD", "2306"),
 }
 
 # Start with a manageable test dataset.
 NUMBER_OF_USERS = 1000
 NUMBER_OF_RESTAURANTS = 100
-NUMBER_OF_ORDERS = 100000
+NUMBER_OF_ORDERS = 200000
 
 STARTING_BALANCE = Decimal("1000000.00")
 
@@ -116,13 +112,12 @@ def seed_orders_using_procedure(cur, user_ids, restaurant_ids):
                 (user_id, restaurant_id, amount),
             )
 
-            # Find the order created by this checkout.
             cur.execute(
                 """
                 SELECT id
                 FROM orders
                 WHERE user_id = %s
-                ORDER BY created_at DESC
+                  AND status IN ('PREPARING', 'DELIVERING')
                 LIMIT 1;
                 """,
                 (user_id,),
@@ -137,8 +132,7 @@ def seed_orders_using_procedure(cur, user_ids, restaurant_ids):
 
             order_id = order_row[0]
 
-            # Complete the test order so the user can
-            # participate in another checkout.
+            # Complete the test order so the user can participate in another checkout.
             cur.execute(
                 """
                 UPDATE orders
@@ -179,9 +173,7 @@ def seed_orders_using_procedure(cur, user_ids, restaurant_ids):
 
 
 def main():
-    print("========================================")
-    print(" BiteStream PostgreSQL Seeder")
-    print("========================================")
+    print(" BiteStream PostgreSQL Seeder \n")
 
     conn = connect()
 
@@ -212,9 +204,7 @@ def main():
 
             print(f"\nCreated {created_orders} orders.")
 
-        print("\n========================================")
-        print(" PostgreSQL seeding completed")
-        print("========================================")
+        print("\n PostgreSQL seeding completed")
 
     except Exception as e:
         conn.rollback()
