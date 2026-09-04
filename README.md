@@ -1,7 +1,14 @@
-
-# BiteStream
+# BiteStream — Food Delivery & Real-Time Logistics
 
 CS6.302 Software System Development — Assignment 1, Project 1 (BiteStream)
+
+| | |
+|---|---|
+| **Team Number** | `15` |
+| **GitHub repository** | `https://github.com/NilotpalChoudhury/BiteStream-` |
+| **Final commit hash** |  `33bb2f24753466b57f65b6a4fccdb83605a2312c` |
+
+```note : final commit in github means the commit before pushing README ```
 
 ## 1. Overview
 
@@ -13,11 +20,11 @@ BiteStream models a food-delivery platform's persistence layer across two databa
 ## 2. Repository structure
 
 ```
-<roll_number>_a1/
+BiteStream/
 ├── README.md
 ├── docs/
-│   ├── relational_erd.png        # TODO — not yet created
-│   └── mongo_schema_map.json     # TODO — not yet created
+│   ├── relational_erd.png        
+│   └── mongo_schema_map.json     
 ├── sql/
 │   ├── 01_schema_ddl.sql
 │   ├── 02_indexes.sql
@@ -44,14 +51,14 @@ BiteStream models a food-delivery platform's persistence layer across two databa
 
 Requires PostgreSQL 16 and a role that can `CREATE EXTENSION` (`01_schema_ddl.sql` creates `pgcrypto` itself for `gen_random_uuid()`).
 
-Connection env vars read by `data_generation/postgres_seeder.py` (defaults shown):
+Connection to env vars in `data_generation/postgres_seeder.py` (defaults shown):
 
 ```
 PGHOST=localhost
 PGPORT=5432
 PGDATABASE=bitestream
 PGUSER=postgres
-PGPASSWORD=<set your own — do not commit a real password to the repo>
+PGPASSWORD=<set your own>
 ```
 
 Run in this order:
@@ -75,7 +82,7 @@ psql -d bitestream -c "SELECT fn_refresh_restaurant_daily_revenue();"
 psql -d bitestream -f sql/06_window_analytics.sql
 ```
 
-`postgres_seeder.py` seeds `users` and `restaurants` directly, then generates order/ledger volume by calling the **real** `sp_execute_checkout` procedure end-to-end (100,000 checkout attempts against a rotating pool of users). This means the seeded `orders` and `wallet_audit_logs` rows are produced by the actual stored procedure, row-locking, and audit trigger under load — it doubles as a stress test of Workflow 1, not just a data generator.
+`postgres_seeder.py` seeds `users` and `restaurants` directly, then generates order/ledger volume by calling the **real** `sp_execute_checkout` procedure end-to-end (200,000 checkout attempts against a rotating pool of users). This means the seeded `orders` and `wallet_audit_logs` rows are produced by the actual stored procedure, row-locking, and audit trigger under load — it doubles as a stress test of Workflow 1, not just a data generator.
 
 ### 3.2 MongoDB
 
@@ -87,15 +94,37 @@ Connection env var read by `data_generation/mongo_seeder.py`:
 MONGO_URI=mongodb://localhost:27017/
 ```
 
-```text
-psycopg2-binary
+**Run `01_collections_and_indexes.js` before the seeder.** It drops and recreates `menus`, `reviews`, and `driverPings`, so running it after seeding will wipe your data.
+
+```bash
+mongosh bitestream mongo/01_collections_and_indexes.js
+
+pip install -r data_generation/requirements.txt
+python data_generation/mongo_seeder.py
+
+mongosh bitestream mongo/02_workflow3_geonear.js
+mongosh bitestream mongo/03_workflow4_facet.js
 ```
 
-Install it with:
-```bash
-pip install -r data_generation/requirements.txt
-```
-PostgreSQL Testing
+## 4. Assumptions
+
+- As no application or middleware layer was required for this assignment, PostgreSQL and MongoDB are treated as independent persistence layers.
+- **UUID primary keys** are used for all PostgreSQL entities (`users`, `restaurants`, `orders`, `wallet_audit_logs`), generated via `gen_random_uuid()`.
+- **`wallet_audit_logs` is treated as a strictly immutable ledger** — beyond the required `AFTER UPDATE OF wallet_balance` trigger that writes audit rows, a `BEFORE UPDATE OR DELETE` trigger blocks any mutation of existing audit rows.
+- **`SET TRANSACTION ISOLATION LEVEL` cannot be the first statement inside a PL/pgSQL procedure body** — PostgreSQL performs an internal catalog lookup before the procedure body executes, so `REPEATABLE READ` must be set by the *caller*:
+  ```sql
+  BEGIN;
+  SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+  CALL sp_execute_checkout('USER_UUID', 'RESTAURANT_UUID', 250.00);
+  COMMIT;
+  ```
+  Row-level locking inside the procedure itself is handled with `SELECT ... FOR UPDATE`, which is unaffected by this limitation.
+- **`idx_active_user_order` enforces "one active order" for the lifetime of a row, not as a temporal state machine** — a user may have at most one row with status `PREPARING`/`DELIVERING` in the table at any time; every prior order must reach `DELIVERED` before that user can check out again. The seeder and any client code must respect this.
+- **MongoDB `restaurant_id` fields (in `menus`/`reviews`) are plain integers 1–100**, while PostgreSQL `restaurants.id` is a UUID. The two are *not* foreign-key linked across databases — each store models restaurants independently, consistent with the assignment's polyglot-persistence premise.
+- **Restaurant and driver coordinates are clustered in a single city bounding box** (~Hyderabad: lat 17.25–17.60, lon 78.30–78.60) so that Workflow 3's 5 km `$geoNear` radius reliably returns a non-empty, realistic result set.
+- **`mongo_seeder.py`** generates 500,000 `driverPings` , 50,000 `reviews`, and 100 `menus` documents.
+
+## 5. Workflows implemented
 
 | Workflow | Description | File |
 |---|---|---|
@@ -248,89 +277,4 @@ Full raw output: [`performance/mongo_execution_stats.json`](performance/mongo_ex
 ```
 
 Full raw output: [`performance/mongo_execution_stats.json`](performance/mongo_execution_stats.json) → `workflow4_facet`
-
-## 7. Data volumes
-
-| Collection / table | Volume |
-|---|---|
-| `restaurants` (Postgres) | 100 |
-| `orders` (Postgres) | ~200,000+ seeded via `sp_execute_checkout` (see §6.1) |
-| `wallet_audit_logs` (Postgres) | ~1 row per successful checkout (trigger-generated) |
-| `menus` (Mongo) | 100 |
-| `reviews` (Mongo) | 50,000 |
-| `driverPings` (Mongo) | 500,000 |
-
-Re-verify exact counts after your final seeding run with 
-`SELECT COUNT(*) FROM orders;` / `SELECT COUNT(*) FROM wallet_audit_logs;` and `db.driverPings.countDocuments()`
- before writing these into the final submission.
-
-The PostgreSQL checkout workflow was also tested by verifying order creation, wallet balance changes, and wallet audit records.
-
-# MongoDB
-
-## Collections
-
-MongoDB uses the following collections:
-
-- `menus` — restaurant menu data
-- `reviews` — customer ratings and reviews
-- `driverPings` — real-time driver location telemetry
-
-## Indexes
-
-- `menus.restaurant_id`
-- `menus.categories.name`
-- `reviews.restaurant_id`
-- `reviews.rating`
-- `driverPings.location` — 2dsphere index
-- `driverPings.created_at` — TTL index (7200 seconds)
-- `driverPings.active`
-
-## Workflow 3 — Nearest Active Driver
-
-File:
-
-`mongo/02_workflow3_geonear.js`
-
-Uses `$geoNear` to find active drivers within 5 km of a restaurant.
-
-The workflow uses the `driverPings.location` 2dsphere index.
-
-Performance evidence:
-
-`performance/workflow3_stats.json`
-
-## Workflow 4 — Review Analytics
-
-File:
-
-`mongo/03_workflow4_facet.js`
-
-Uses `$facet` to calculate:
-
-- Rating distribution
-- Most frequent sentiment tags
-- Overall average rating
-
-Performance evidence:
-
-`performance/workflow4_stats.json`
-
-Combined MongoDB performance evidence:
-
-`performance/mongo_execution_stats.json`
-
-## Data Generation
-
-MongoDB test data is generated using:
-
-`data_generation/mongo_seeder.py`
-
-The seeder generates menus, reviews, and large-scale driver telemetry data.
-
-## Schema Map
-
-MongoDB schema information is documented in:
-
-`docs/mongo_schema_map.json`
 
